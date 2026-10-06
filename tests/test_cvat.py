@@ -3,7 +3,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from annotate_tables.cli import cells_to_structure, crop_tables, to_cvat_xml
+from annotate_tables.cvat import crop_tables, to_cvat_xml
+from annotate_tables.detect import cells_to_structure
 
 
 def test_to_cvat_xml():

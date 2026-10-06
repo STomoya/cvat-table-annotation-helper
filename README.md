@@ -2,6 +2,40 @@
 
 Pre-annotate tables in PDFs for correction in CVAT.
 
+## Setup
+
+Needs [uv](https://docs.astral.sh/uv/), Python 3.14 or later (uv installs it) and `pdftoppm` from poppler on the path.
+
+```sh
+sudo apt install poppler-utils  # or: brew install poppler
+uv sync
+```
+
+The CVAT steps need an account on a running CVAT server:
+
+```sh
+export CVAT_USER=<user>
+export CVAT_PASSWORD=<password>
+export CVAT_HOST=http://<host>:8080  # optional, overrides the default server
+```
+
+Model weights are downloaded from Hugging Face on first use. A CUDA GPU is used when available, otherwise CPU.
+
+## Usage
+
+```sh
+# 1. Download a PDF, detect its tables and create a CVAT task to correct them.
+uv run annotate-tables <pdf-url> --push
+
+# 2. Crop the corrected tables, pre-label rows, columns and spans, and create a structure task.
+uv run annotate-structure <table-task-id>
+
+# 3. Export the corrected structure task as a COCO dataset.
+uv run export-structure-coco <structure-task-id>
+```
+
+Everything is written under `data/<document>/`.
+
 ## Model selection
 
 Last reviewed: 2026-10-06. Chosen on one hand-annotated document (27 pages, 31 ruled Japanese tables), so re-run

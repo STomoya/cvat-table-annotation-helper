@@ -1,7 +1,7 @@
 [project]
 name = "annotate-tables"
 version = "0.1.0"
-description = "Add your description here"
+description = "Pre-annotate tables in PDFs for correction in CVAT."
 readme = "README.md"
 authors = [
     { name = "Tomoya Sawada", email = "stomoya0110@gmail.com" }
