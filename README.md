@@ -36,6 +36,17 @@ uv run export-structure-coco <structure-task-id>
 
 Everything is written under `data/<document>/`.
 
+### Web UI
+
+```sh
+uv run annotate-web --host <address> --port 8000
+```
+
+Runs the same three steps from one page, with a button for each document's next step and links to its CVAT tasks.
+Progress is kept in `data/<document>/state.json`; documents without that file are not listed. There is no login, so
+listen on a private address such as the machine's Tailscale IP rather than `0.0.0.0`. The page only answers under
+the `--host` address and `localhost`; add other names you open it by with `--allow-host <name>`.
+
 ## Model selection
 
 Last reviewed: 2026-10-06. Chosen on one hand-annotated document (27 pages, 31 ruled Japanese tables), so re-run

@@ -11,6 +11,7 @@ dependencies = [
     "cvat-sdk>=2.77.0",
     "opencv-python-headless>=5.0.0.93",
     "pillow>=12.3.0",
+    "python-dotenv>=1.2.4",
     "torch>=2.14.1",
     "torchvision>=0.29.1",
     "transformers>=5.18.0",
@@ -20,6 +21,7 @@ dependencies = [
 annotate-tables = "annotate_tables:main"
 annotate-structure = "annotate_tables:structure_main"
 export-structure-coco = "annotate_tables:coco_main"
+annotate-web = "annotate_tables:web_main"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]

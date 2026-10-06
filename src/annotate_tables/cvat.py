@@ -56,7 +56,7 @@ def cvat_client():
     return make_client(CVAT_HOST, credentials=credentials)
 
 
-def create_task(client, name: str, labels: Sequence[str], images: list[Path], annotation_path: Path) -> None:
+def create_task(client, name: str, labels: Sequence[str], images: list[Path], annotation_path: Path) -> int:
     task = client.tasks.create_from_data(
         spec={'name': name, 'labels': [{'name': n} for n in labels]},
         resources=images,
@@ -64,6 +64,7 @@ def create_task(client, name: str, labels: Sequence[str], images: list[Path], an
         annotation_format='CVAT 1.1',
     )
     print(f'CVAT task {task.id}: {CVAT_HOST}/tasks/{task.id}')
+    return task.id
 
 
 def export_annotations(task, path: Path) -> None:

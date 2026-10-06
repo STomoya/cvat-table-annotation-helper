@@ -3,6 +3,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from annotate_tables.cli import read_state, stage, update_state
 from annotate_tables.cvat import crop_tables, to_cvat_xml
 from annotate_tables.detect import cells_to_structure
 
@@ -88,3 +89,17 @@ if __name__ == '__main__':
     test_to_cvat_xml()
     test_crop_tables()
     print('ok')
+
+
+def test_state_round_trip_and_stage():
+    with tempfile.TemporaryDirectory() as tmp:
+        doc_dir = Path(tmp)
+        assert read_state(doc_dir) == {}
+        assert stage(read_state(doc_dir)) == 'detected'
+        update_state(doc_dir, table_task_id=3)
+        assert stage(read_state(doc_dir)) == 'correct tables in CVAT'
+        update_state(doc_dir, structure_task_id=4)
+        assert read_state(doc_dir) == {'table_task_id': 3, 'structure_task_id': 4}
+        assert stage(read_state(doc_dir)) == 'correct structure in CVAT'
+        update_state(doc_dir, exported=True)
+        assert stage(read_state(doc_dir)) == 'exported'
