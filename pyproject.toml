@@ -1,0 +1,60 @@
+[project]
+name = "annotate-tables"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Tomoya Sawada", email = "stomoya0110@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "cvat-sdk>=2.77.0",
+    "pillow>=12.3.0",
+    "torch>=2.14.1",
+    "transformers>=5.18.0",
+]
+
+[project.scripts]
+annotate-tables = "annotate_tables:main"
+annotate-structure = "annotate_tables:structure_main"
+export-structure-coco = "annotate_tables:coco_main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+fix = true
+line-length = 120
+indent-width = 4
+output-format = "concise"
+
+src = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "E",
+  "F",
+  "C4",
+  "SIM",
+  "W",
+  "NPY",
+  "PIE",
+  "PL",
+  "PYI",
+  "RUF",
+  "TRY",
+]
+pydocstyle = { convention = 'google' }
+fixable = ["ALL"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.terminal]
+output-format = "concise"
