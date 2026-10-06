@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from cvat_sdk import make_client
 from PIL import Image, ImageOps
 
-MODEL = 'docling-project/docling-layout-heron'
+MODEL = 'PaddlePaddle/PP-DocLayoutV3_safetensors'
 USER_AGENT = 'Mozilla/5.0 (annotate-tables)'
 CVAT_HOST = os.environ.get('CVAT_HOST', 'http://100.79.94.13:8080')
 STRUCTURE_LABELS = ('column', 'row', 'span')
