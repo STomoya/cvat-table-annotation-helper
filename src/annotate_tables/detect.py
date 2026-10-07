@@ -94,6 +94,19 @@ def cells_to_structure(cells: Sequence[Sequence[float]], tol: float) -> list[dic
     return [{'label': label, 'box': [round(v, 2) for v in box]} for label, box in boxes]
 
 
+def expand_to_edges(boxes: list[dict], width: int, height: int) -> list[dict]:
+    """Stretch rows to the full image width and columns to the full image height."""
+    expanded = []
+    for b in boxes:
+        x1, y1, x2, y2 = b['box']
+        if b['label'] == 'row':
+            x1, x2 = 0, width
+        elif b['label'] == 'column':
+            y1, y2 = 0, height
+        expanded.append(b | {'box': [x1, y1, x2, y2]})
+    return expanded
+
+
 def detect_structure(tables_dir: Path, names: list[str], threshold: float, tol: float) -> list[dict]:
     import torch  # noqa: PLC0415 -- slow. Use `lazy` on 3.15
     from transformers import (  # noqa: PLC0415 -- imports torch internally.
@@ -117,7 +130,7 @@ def detect_structure(tables_dir: Path, names: list[str], threshold: float, tol: 
         kind = classifier.config.id2label[logits.argmax().item()]
         result = run_detector(*detectors[kind], ImageOps.expand(image, INFERENCE_PAD, fill='white'), threshold)
         cells = [[v - INFERENCE_PAD for v in box.tolist()] for box in result['boxes']]
-        boxes = cells_to_structure(cells, tol)
+        boxes = expand_to_edges(cells_to_structure(cells, tol), image.width, image.height)
         records.append({'image': name, 'width': image.width, 'height': image.height, 'boxes': boxes})
         counts = ', '.join(f'{sum(b["label"] == n for b in boxes)} {n}(s)' for n in STRUCTURE_LABELS)
         print(f'{name}: {kind}, {counts}')

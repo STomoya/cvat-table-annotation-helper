@@ -5,7 +5,7 @@ from PIL import Image
 
 from annotate_tables.cli import read_state, stage, update_state
 from annotate_tables.cvat import crop_tables, to_cvat_xml
-from annotate_tables.detect import cells_to_structure
+from annotate_tables.detect import cells_to_structure, expand_to_edges
 
 
 def test_to_cvat_xml():
@@ -89,6 +89,15 @@ if __name__ == '__main__':
     test_to_cvat_xml()
     test_crop_tables()
     print('ok')
+
+
+def test_expand_to_edges():
+    boxes = [
+        {'label': 'row', 'box': [5, 10, 90, 20]},
+        {'label': 'column', 'box': [5, 10, 30, 40]},
+        {'label': 'span', 'box': [5, 10, 30, 40]},
+    ]
+    assert [b['box'] for b in expand_to_edges(boxes, 100, 50)] == [[0, 10, 100, 20], [5, 0, 30, 50], [5, 10, 30, 40]]
 
 
 def test_state_round_trip_and_stage():
