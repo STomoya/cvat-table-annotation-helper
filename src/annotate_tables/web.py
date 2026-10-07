@@ -179,22 +179,24 @@ def make_handler(out: Path, allowed_hosts: set[str]) -> type[BaseHTTPRequestHand
             docs = documents(out)
             upload = uploaded_file(self.headers.get('Content-Type', ''), body) if self.path == '/upload' else None
             form = {} if self.path == '/upload' else parse_qs(body.decode())
-            url = form.get('url', [''])[0].strip()
+            url = upload[2] if upload else form.get('url', [''])[0].strip()
             doc = docs.get(form.get('doc', [''])[0])
-            if self.path == '/add' and url:
-                if any(d['url'] == url for d in docs.values()):
+            known = bool(url) and any(d['url'] == url for d in docs.values())
+            # The address becomes a link on the page, so it must not be a javascript: one, and add_document also
+            # takes local paths, which a page without login must not read from the server.
+            if url and urlparse(url).scheme not in ('http', 'https'):
+                job['error'] = f'not an http(s) URL: {url}'
+            elif self.path == '/add' and url:
+                if known:
                     job['error'] = f'already added: {url}'
                 else:
                     start_job(f'adding {url}', lambda: add_document(url, out))
             elif upload:
-                name, data, source = upload
-                # The address becomes a link on the page, so it must not be a javascript: one.
-                if source and urlparse(source).scheme not in ('http', 'https'):
-                    job['error'] = f'not an http(s) URL: {source}'
-                elif document_name(data, name) in docs or any(source and d['url'] == source for d in docs.values()):
+                name, data, _ = upload
+                if known or document_name(data, name) in docs:
                     job['error'] = f'already added: {name}'
                 else:
-                    origin = {'url': source} if source else {}
+                    origin = {'url': url} if url else {}
                     start_job(
                         f'adding {name}', lambda: annotate_document(store(data, name, out, filename=name, **origin))
                     )
