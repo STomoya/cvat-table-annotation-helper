@@ -4,13 +4,19 @@ import json
 import threading
 import traceback
 from collections.abc import Callable
+from email.parser import BytesParser
+from email.policy import HTTP
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .cli import add_document, build_structure, export_coco, read_state, stage
+from .cli import add_document, annotate_document, build_structure, export_coco, read_state, stage
 from .cvat import CVAT_HOST, cvat_client
+from .pdf import document_name, store
+
+# ponytail: a request is read into memory whole, stream uploads to disk if PDFs outgrow this.
+MAX_REQUEST = 200 * 1024 * 1024
 
 # ponytail: one job at a time and its status lives in memory, a queue and persisted errors if that gets in the way.
 job: dict = {'label': '', 'error': '', 'thread': None}
@@ -46,6 +52,21 @@ def documents(out: Path) -> dict[str, dict]:
     return docs
 
 
+def uploaded_file(content_type: str, body: bytes) -> tuple[str, bytes, str] | None:
+    """Return the file name, the contents and the url field of an upload form."""
+    message = BytesParser(policy=HTTP).parsebytes(b'Content-Type: ' + content_type.encode() + b'\r\n\r\n' + body)
+    file, url = None, ''
+    for part in message.iter_parts():
+        name, data = part.get_filename(), part.get_payload(decode=True)
+        if not isinstance(data, bytes):
+            continue
+        if name:
+            file = name, data
+        elif part.get_param('name', header='content-disposition') == 'url':
+            url = data.decode().strip()
+    return (*file, url) if file else None
+
+
 def next_step(doc_dir: Path) -> None:
     state = read_state(doc_dir)
     with cvat_client() as client:
@@ -74,13 +95,14 @@ def render(out: Path) -> str:
         else:
             action = 'Export COCO'
         url = html.escape(doc['url'])
+        source = f'<a href="{url}">{url}</a>' if url else 'uploaded'
         links = ' '.join(
             filter(
                 None, [task_link(state, 'table_task_id', 'tables'), task_link(state, 'structure_task_id', 'structure')]
             )
         )
         rows.append(
-            f'<tr><td>{html.escape(name)}<br><small><a href="{url}">{url}</a></small></td>'
+            f'<tr><td>{html.escape(name)}<br><small>{source}</small></td>'
             f'<td>{stage(state)}</td><td>{links}</td>'
             f'<td><form method="post" action="/step"><input type="hidden" name="doc" value="{html.escape(name)}">'
             f'<button{disabled}>{action}</button></form></td></tr>'
@@ -100,6 +122,8 @@ table {{ border-collapse: collapse; width: 100%; }}
 td, th {{ border-bottom: 1px solid #8884; padding: .5rem; text-align: left; vertical-align: top; }}
 small {{ word-break: break-all; }}
 input[type=url] {{ width: 70%; }}
+form {{ margin-bottom: .5rem; }}
+form[action='/upload'] input[type=url] {{ width: 40%; }}
 .busy {{ color: #06c; }} .error {{ color: #c00; white-space: pre-wrap; }}
 </style></head><body>
 <h1>annotate-tables</h1>
@@ -107,6 +131,11 @@ input[type=url] {{ width: 70%; }}
 <form method="post" action="/add">
 <input type="url" name="url" placeholder="https://example.com/document.pdf" required{disabled}>
 <button{disabled}>Add PDF</button>
+</form>
+<form method="post" action="/upload" enctype="multipart/form-data">
+<input type="file" name="file" accept="application/pdf,.pdf" required{disabled}>
+<input type="url" name="url" placeholder="where it came from (optional)"{disabled}>
+<button{disabled}>Upload PDF</button>
 </form>
 <table><tr><th>Document</th><th>Stage</th><th>CVAT</th><th>Next</th></tr>
 {''.join(rows)}
@@ -142,8 +171,14 @@ def make_handler(out: Path, allowed_hosts: set[str]) -> type[BaseHTTPRequestHand
             if urlparse(self.headers.get('Origin', '')).netloc != self.headers.get('Host'):
                 self.send_error(HTTPStatus.FORBIDDEN)
                 return
-            form = parse_qs(self.rfile.read(int(self.headers.get('Content-Length', 0))).decode())
+            length = int(self.headers.get('Content-Length', 0))
+            if length > MAX_REQUEST:
+                self.send_error(HTTPStatus.CONTENT_TOO_LARGE)
+                return
+            body = self.rfile.read(length)
             docs = documents(out)
+            upload = uploaded_file(self.headers.get('Content-Type', ''), body) if self.path == '/upload' else None
+            form = {} if self.path == '/upload' else parse_qs(body.decode())
             url = form.get('url', [''])[0].strip()
             doc = docs.get(form.get('doc', [''])[0])
             if self.path == '/add' and url:
@@ -151,6 +186,18 @@ def make_handler(out: Path, allowed_hosts: set[str]) -> type[BaseHTTPRequestHand
                     job['error'] = f'already added: {url}'
                 else:
                     start_job(f'adding {url}', lambda: add_document(url, out))
+            elif upload:
+                name, data, source = upload
+                # The address becomes a link on the page, so it must not be a javascript: one.
+                if source and urlparse(source).scheme not in ('http', 'https'):
+                    job['error'] = f'not an http(s) URL: {source}'
+                elif document_name(data, name) in docs or any(source and d['url'] == source for d in docs.values()):
+                    job['error'] = f'already added: {name}'
+                else:
+                    origin = {'url': source} if source else {}
+                    start_job(
+                        f'adding {name}', lambda: annotate_document(store(data, name, out, filename=name, **origin))
+                    )
             elif self.path == '/step' and doc:
                 start_job(f'next step for {doc["dir"].name}', lambda: next_step(doc['dir']))
             else:

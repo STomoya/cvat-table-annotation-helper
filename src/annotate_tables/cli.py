@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from .cvat import create_task, crop_tables, cvat_client, export_annotations, write_cvat_xml
 from .detect import STRUCTURE_LABELS, detect_structure, detect_tables
-from .pdf import download, render_pages
+from .pdf import fetch, render_pages
 
 load_dotenv()
 
@@ -40,8 +40,11 @@ def stage(state: dict) -> str:
     return 'detected'
 
 
-def add_document(url: str, out: Path, dpi: int = 150, threshold: float = 0.5, push: bool = True) -> Path:
-    doc_dir = download(url, out)
+def add_document(source: str, out: Path, dpi: int = 150, threshold: float = 0.5, push: bool = True) -> Path:
+    return annotate_document(fetch(source, out), dpi, threshold, push)
+
+
+def annotate_document(doc_dir: Path, dpi: int = 150, threshold: float = 0.5, push: bool = True) -> Path:
     pages = render_pages(doc_dir, dpi)
     records = detect_tables(pages, threshold)
     write_jsonl(records, doc_dir / 'detections.jsonl')
@@ -92,8 +95,8 @@ def export_coco(task, doc_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Download a PDF and pre-annotate its tables for CVAT.')
-    parser.add_argument('url')
+    parser = argparse.ArgumentParser(description='Fetch a PDF and pre-annotate its tables for CVAT.')
+    parser.add_argument('source', help='URL or local path of the PDF')
     parser.add_argument('--out', type=Path, default=Path('data'))
     parser.add_argument('--dpi', type=int, default=150)
     parser.add_argument('--threshold', type=float, default=0.5)
@@ -103,7 +106,7 @@ def main() -> None:
         help='create a CVAT task (CVAT_HOST, CVAT_USER, CVAT_PASSWORD)',
     )
     args = parser.parse_args()
-    add_document(args.url, args.out, args.dpi, args.threshold, args.push)
+    add_document(args.source, args.out, args.dpi, args.threshold, args.push)
 
 
 def structure_main() -> None:

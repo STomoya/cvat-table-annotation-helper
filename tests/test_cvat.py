@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -5,6 +6,8 @@ from PIL import Image, ImageDraw
 
 from annotate_tables.cli import read_state, stage, update_state
 from annotate_tables.cvat import crop_tables, to_cvat_xml
+from annotate_tables.pdf import fetch
+from annotate_tables.web import uploaded_file
 from annotate_tables.detect import align_rows_to_text, cells_to_structure, expand_to_edges
 
 
@@ -120,6 +123,29 @@ def test_align_rows_to_text():
 
     draw.line([0, 22, 99, 22], fill='black')
     assert align_rows_to_text(boxes, image, tol=8)[0]['box'] == [0, 0, 100, 22.5]
+
+
+def test_fetch_local_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / 'my report.pdf'
+        source.write_bytes(b'%PDF-1.7 test')
+        doc_dir = fetch(str(source), Path(tmp) / 'data')
+        assert doc_dir.name.startswith('my_report-')
+        assert (doc_dir / 'source.pdf').read_bytes() == b'%PDF-1.7 test'
+        assert json.loads((doc_dir / 'metadata.json').read_text())['url'] == source.resolve().as_uri()
+
+
+def test_uploaded_file():
+    data = b'%PDF-1.7\r\n\xff\x00\r\rbinary\n--not-the-boundary\n'
+    body = (
+        b'--XYZ\r\nContent-Disposition: form-data; name="file"; filename="my report.pdf"\r\n'
+        b'Content-Type: application/pdf\r\n\r\n' + data + b'\r\n--XYZ--\r\n'
+    )
+    assert uploaded_file('multipart/form-data; boundary=XYZ', body) == ('my report.pdf', data, '')
+    field = b'--XYZ\r\nContent-Disposition: form-data; name="url"\r\n\r\nhttps://example.com/a.pdf\r\n'
+    with_url = uploaded_file('multipart/form-data; boundary=XYZ', field + body)
+    assert with_url == ('my report.pdf', data, 'https://example.com/a.pdf')
+    assert uploaded_file('application/x-www-form-urlencoded', b'url=x') is None
 
 
 def test_state_round_trip_and_stage():

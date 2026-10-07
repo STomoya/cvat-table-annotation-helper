@@ -24,8 +24,8 @@ Model weights are downloaded from Hugging Face on first use. A CUDA GPU is used 
 ## Usage
 
 ```sh
-# 1. Download a PDF, detect its tables and create a CVAT task to correct them.
-uv run annotate-tables <pdf-url> --push
+# 1. Fetch a PDF, detect its tables and create a CVAT task to correct them.
+uv run annotate-tables <pdf-url-or-path> --push
 
 # 2. Crop the corrected tables, pre-label rows, columns and spans, and create a structure task.
 uv run annotate-structure <table-task-id>
@@ -43,6 +43,7 @@ uv run annotate-web --host <address> --port 8000
 ```
 
 Runs the same three steps from one page, with a button for each document's next step and links to its CVAT tasks.
+PDFs are added by URL or uploaded from the browser.
 Progress is kept in `data/<document>/state.json`; documents without that file are not listed. There is no login, so
 listen on a private address such as the machine's Tailscale IP rather than `0.0.0.0`. The page only answers under
 the `--host` address and `localhost`; add other names you open it by with `--allow-host <name>`.
