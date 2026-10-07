@@ -1,11 +1,11 @@
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from annotate_tables.cli import read_state, stage, update_state
 from annotate_tables.cvat import crop_tables, to_cvat_xml
-from annotate_tables.detect import cells_to_structure, expand_to_edges
+from annotate_tables.detect import align_rows_to_text, cells_to_structure, expand_to_edges
 
 
 def test_to_cvat_xml():
@@ -98,6 +98,28 @@ def test_expand_to_edges():
         {'label': 'span', 'box': [5, 10, 30, 40]},
     ]
     assert [b['box'] for b in expand_to_edges(boxes, 100, 50)] == [[0, 10, 100, 20], [5, 0, 30, 50], [5, 10, 30, 40]]
+
+
+def test_align_rows_to_text():
+    image = Image.new('RGB', (100, 60), 'white')
+    draw = ImageDraw.Draw(image)
+    # Text running down the first column, and two lines of text in the other four: ink on pixel rows 5-14 and 35-44.
+    draw.rectangle([5, 5, 15, 44], fill='black')
+    for left in range(25, 100, 20):
+        draw.rectangle([left, 5, left + 10, 14], fill='black')
+        draw.rectangle([left, 35, left + 10, 44], fill='black')
+    boxes = [
+        {'label': 'row', 'box': [0, 0, 100, 18]},
+        {'label': 'row', 'box': [0, 18, 100, 60]},
+        {'label': 'span', 'box': [0, 18, 40, 60]},
+        *({'label': 'column', 'box': [left, 0, left + 20, 60]} for left in range(0, 100, 20)),
+    ]
+    aligned = [b['box'] for b in align_rows_to_text(boxes, image, tol=8)]
+    assert aligned[:3] == [[0, 0, 100, 25], [0, 25, 100, 60], [0, 25, 40, 60]]
+    assert aligned[3:] == [b['box'] for b in boxes[3:]]
+
+    draw.line([0, 22, 99, 22], fill='black')
+    assert align_rows_to_text(boxes, image, tol=8)[0]['box'] == [0, 0, 100, 22.5]
 
 
 def test_state_round_trip_and_stage():

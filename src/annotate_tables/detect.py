@@ -1,8 +1,11 @@
+from collections import Counter
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 from PIL import Image, ImageOps
 
 TABLE_DETECTOR = 'PaddlePaddle/PP-DocLayoutV3_safetensors'
@@ -14,6 +17,18 @@ CELL_MODELS = {
 STRUCTURE_LABELS = ('column', 'row', 'span')
 # White border added around a crop for cell detection only; 10 beat 0 and 20 on hand-annotated tables.
 INFERENCE_PAD = 10
+# Row alignment, tuned on three hand-annotated documents rendered at 150 dpi.
+INK_LEVEL = 128
+# Shortest straight run of ink taken for a ruling line; longer than any stroke of the body text.
+RULE_LENGTH = 40
+# A ruling line covers at least this share of the table width.
+RULE_COVER = 0.2
+# Breaks up to this long in a dotted or dashed ruling line are bridged.
+RULE_BREAK = 3
+# Share of the columns that may have text on a pixel row of a gap.
+MAX_CROSSING = 0.2
+# Thinner unruled gaps are noise inside dense text.
+MIN_GAP = 3
 
 
 def load_detector(repo: str) -> tuple[Any, Any]:
@@ -94,6 +109,67 @@ def cells_to_structure(cells: Sequence[Sequence[float]], tol: float) -> list[dic
     return [{'label': label, 'box': [round(v, 2) for v in box]} for label, box in boxes]
 
 
+def runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], mask.astype(np.int8), [0])))).tolist()
+    return list(zip(edges[::2], edges[1::2], strict=True))
+
+
+def row_separators(
+    image: Image.Image, columns: list[tuple[int, int]]
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Find where rows can be divided, as (top, bottom) pixel rows: the ruling lines, and the gaps between text.
+
+    A pixel row belongs to a gap when no more than MAX_CROSSING of the columns, given as (left, right), have text on
+    it, so that text running down a cell that spans rows does not hide the gaps of the other columns.
+    """
+    ink = (np.asarray(image.convert('L')) < INK_LEVEL).astype(np.uint8)
+    rules = []
+    for shape in ((1, RULE_LENGTH), (RULE_LENGTH, 1)):
+        # Closing first makes dotted and dashed lines solid.
+        bridge = np.ones((1, RULE_BREAK) if shape[0] == 1 else (RULE_BREAK, 1), np.uint8)
+        solid = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, bridge)
+        rules.append(cv2.morphologyEx(solid, cv2.MORPH_OPEN, np.ones(shape, np.uint8)))
+    # Faint edge pixels of a ruling line fall on either side of INK_LEVEL and survive the opening.
+    fringe = cv2.dilate(cv2.bitwise_or(*rules), np.ones((3, 3), np.uint8))
+    text = np.where(fringe > 0, 0, ink)
+    crossed = np.sum([text[:, left:right].any(axis=1) for left, right in columns], axis=0)
+    blank = crossed <= MAX_CROSSING * len(columns)
+    ruled = rules[0].sum(axis=1) >= RULE_COVER * image.width
+    gaps = [
+        (top, bottom)
+        for top, bottom in runs(blank)
+        if top > 0 and bottom < image.height and bottom - top >= MIN_GAP and not ruled[top:bottom].any()
+    ]
+    return runs(ruled), gaps
+
+
+def align_rows_to_text(boxes: list[dict], image: Image.Image, tol: float) -> list[dict]:
+    """Move the inner row boundaries, and the spans on them, onto ruling lines or into the gaps between text.
+
+    A boundary moves onto the nearest ruling line within tol pixels, or without one to the middle of the nearest gap
+    that is closer to it than to the neighbouring boundaries. Boundaries that would end up in the same place stay
+    where they are.
+    """
+    ys = sorted({v for b in boxes if b['label'] == 'row' for v in b['box'][1::2]})
+    columns = [(max(round(b['box'][0]), 0), round(b['box'][2])) for b in boxes if b['label'] == 'column']
+    rules, gaps = row_separators(image, columns)
+    chosen = {}
+    for above, y, below in zip(ys, ys[1:], ys[2:], strict=False):
+        near = [r for r in rules if r[1] >= y - tol and r[0] <= y + tol]
+        near = near or [g for g in gaps if g[1] > (above + y) / 2 and g[0] < (y + below) / 2]
+        if near:
+            chosen[y] = min(near, key=lambda s: max(s[0] - y, y - s[1], 0))
+    shared = Counter(chosen.values())
+    moved = {y: (s[0] + s[1]) / 2 for y, s in chosen.items() if shared[s] == 1}
+    aligned = []
+    for b in boxes:
+        x1, y1, x2, y2 = b['box']
+        if b['label'] != 'column':
+            y1, y2 = moved.get(y1, y1), moved.get(y2, y2)
+        aligned.append(b | {'box': [x1, y1, x2, y2]})
+    return aligned
+
+
 def expand_to_edges(boxes: list[dict], width: int, height: int) -> list[dict]:
     """Stretch rows to the full image width and columns to the full image height."""
     expanded = []
@@ -130,7 +206,8 @@ def detect_structure(tables_dir: Path, names: list[str], threshold: float, tol: 
         kind = classifier.config.id2label[logits.argmax().item()]
         result = run_detector(*detectors[kind], ImageOps.expand(image, INFERENCE_PAD, fill='white'), threshold)
         cells = [[v - INFERENCE_PAD for v in box.tolist()] for box in result['boxes']]
-        boxes = expand_to_edges(cells_to_structure(cells, tol), image.width, image.height)
+        boxes = align_rows_to_text(cells_to_structure(cells, tol), image, tol)
+        boxes = expand_to_edges(boxes, image.width, image.height)
         records.append({'image': name, 'width': image.width, 'height': image.height, 'boxes': boxes})
         counts = ', '.join(f'{sum(b["label"] == n for b in boxes)} {n}(s)' for n in STRUCTURE_LABELS)
         print(f'{name}: {kind}, {counts}')
