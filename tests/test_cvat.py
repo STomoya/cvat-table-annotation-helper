@@ -8,7 +8,7 @@ from annotate_tables.cli import read_state, stage, update_state
 from annotate_tables.cvat import crop_tables, to_cvat_xml
 from annotate_tables.pdf import fetch
 from annotate_tables.web import uploaded_file
-from annotate_tables.detect import align_rows_to_text, cells_to_structure, expand_to_edges
+from annotate_tables.detect import align_columns_to_rules, align_rows_to_text, cells_to_structure, expand_to_edges
 
 
 def test_to_cvat_xml():
@@ -97,10 +97,18 @@ if __name__ == '__main__':
 def test_expand_to_edges():
     boxes = [
         {'label': 'row', 'box': [5, 10, 90, 20]},
+        {'label': 'row', 'box': [5, 20, 90, 40]},
         {'label': 'column', 'box': [5, 10, 30, 40]},
-        {'label': 'span', 'box': [5, 10, 30, 40]},
+        {'label': 'column', 'box': [30, 10, 90, 40]},
+        {'label': 'span', 'box': [5, 20, 90, 40]},
     ]
-    assert [b['box'] for b in expand_to_edges(boxes, 100, 50)] == [[0, 10, 100, 20], [5, 0, 30, 50], [5, 10, 30, 40]]
+    assert [b['box'] for b in expand_to_edges(boxes, 100, 50)] == [
+        [0, 0, 100, 20],
+        [0, 20, 100, 50],
+        [0, 0, 30, 50],
+        [30, 0, 100, 50],
+        [0, 20, 100, 50],
+    ]
 
 
 def test_align_rows_to_text():
@@ -123,6 +131,21 @@ def test_align_rows_to_text():
 
     draw.line([0, 22, 99, 22], fill='black')
     assert align_rows_to_text(boxes, image, tol=8)[0]['box'] == [0, 0, 100, 22.5]
+
+
+def test_align_columns_to_rules():
+    image = Image.new('RGB', (100, 60), 'white')
+    ImageDraw.Draw(image).line([33, 0, 33, 59], fill='black')
+    boxes = [
+        {'label': 'column', 'box': [0, 0, 30, 60]},
+        {'label': 'column', 'box': [30, 0, 70, 60]},
+        {'label': 'column', 'box': [70, 0, 100, 60]},
+        {'label': 'span', 'box': [30, 0, 100, 20]},
+        {'label': 'row', 'box': [0, 0, 100, 60]},
+    ]
+    aligned = [b['box'] for b in align_columns_to_rules(boxes, image, tol=8)]
+    # The boundary at 70 has no ruling line and stays.
+    assert aligned == [[0, 0, 33.5, 60], [33.5, 0, 70, 60], [70, 0, 100, 60], [33.5, 0, 100, 20], [0, 0, 100, 60]]
 
 
 def test_fetch_local_file():

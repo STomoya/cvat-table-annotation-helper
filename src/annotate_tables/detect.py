@@ -21,7 +21,7 @@ INFERENCE_PAD = 10
 INK_LEVEL = 128
 # Shortest straight run of ink taken for a ruling line; longer than any stroke of the body text.
 RULE_LENGTH = 40
-# A ruling line covers at least this share of the table width.
+# A ruling line covers at least this share of the table width, or of its height for a vertical one.
 RULE_COVER = 0.2
 # Breaks up to this long in a dotted or dashed ruling line are bridged.
 RULE_BREAK = 3
@@ -114,6 +114,17 @@ def runs(mask: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(edges[::2], edges[1::2], strict=True))
 
 
+def ruling_lines(ink: np.ndarray) -> list[np.ndarray]:
+    """Mask the horizontal and the vertical ruling lines of a binary image."""
+    rules = []
+    for shape in ((1, RULE_LENGTH), (RULE_LENGTH, 1)):
+        # Closing first makes dotted and dashed lines solid.
+        bridge = np.ones((1, RULE_BREAK) if shape[0] == 1 else (RULE_BREAK, 1), np.uint8)
+        solid = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, bridge)
+        rules.append(cv2.morphologyEx(solid, cv2.MORPH_OPEN, np.ones(shape, np.uint8)))
+    return rules
+
+
 def row_separators(
     image: Image.Image, columns: list[tuple[int, int]]
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
@@ -123,12 +134,7 @@ def row_separators(
     it, so that text running down a cell that spans rows does not hide the gaps of the other columns.
     """
     ink = (np.asarray(image.convert('L')) < INK_LEVEL).astype(np.uint8)
-    rules = []
-    for shape in ((1, RULE_LENGTH), (RULE_LENGTH, 1)):
-        # Closing first makes dotted and dashed lines solid.
-        bridge = np.ones((1, RULE_BREAK) if shape[0] == 1 else (RULE_BREAK, 1), np.uint8)
-        solid = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, bridge)
-        rules.append(cv2.morphologyEx(solid, cv2.MORPH_OPEN, np.ones(shape, np.uint8)))
+    rules = ruling_lines(ink)
     # Faint edge pixels of a ruling line fall on either side of INK_LEVEL and survive the opening.
     fringe = cv2.dilate(cv2.bitwise_or(*rules), np.ones((3, 3), np.uint8))
     text = np.where(fringe > 0, 0, ink)
@@ -170,11 +176,45 @@ def align_rows_to_text(boxes: list[dict], image: Image.Image, tol: float) -> lis
     return aligned
 
 
+def align_columns_to_rules(boxes: list[dict], image: Image.Image, tol: float) -> list[dict]:
+    """Move the inner column boundaries, and the spans on them, onto ruling lines.
+
+    A boundary moves onto the nearest ruling line within tol pixels. Boundaries without one, and boundaries that would
+    end up in the same place, stay where they are.
+    """
+    xs = sorted({v for b in boxes if b['label'] == 'column' for v in b['box'][::2]})
+    ink = (np.asarray(image.convert('L')) < INK_LEVEL).astype(np.uint8)
+    rules = runs(ruling_lines(ink)[1].sum(axis=0) >= RULE_COVER * image.height)
+    chosen = {}
+    for x in xs[1:-1]:
+        near = [r for r in rules if r[1] >= x - tol and r[0] <= x + tol]
+        if near:
+            chosen[x] = min(near, key=lambda s: max(s[0] - x, x - s[1], 0))
+    shared = Counter(chosen.values())
+    moved = {x: (s[0] + s[1]) / 2 for x, s in chosen.items() if shared[s] == 1}
+    aligned = []
+    for b in boxes:
+        x1, y1, x2, y2 = b['box']
+        if b['label'] != 'row':
+            x1, x2 = moved.get(x1, x1), moved.get(x2, x2)
+        aligned.append(b | {'box': [x1, y1, x2, y2]})
+    return aligned
+
+
 def expand_to_edges(boxes: list[dict], width: int, height: int) -> list[dict]:
-    """Stretch rows to the full image width and columns to the full image height."""
+    """Stretch rows to the full image width and columns to the full image height.
+
+    The outermost row and column boundaries, and the spans on them, move to the image edges as well.
+    """
+    xs = [v for b in boxes if b['label'] == 'column' for v in b['box'][::2]]
+    ys = [v for b in boxes if b['label'] == 'row' for v in b['box'][1::2]]
+    to_x = {min(xs): 0, max(xs): width} if xs else {}
+    to_y = {min(ys): 0, max(ys): height} if ys else {}
     expanded = []
     for b in boxes:
         x1, y1, x2, y2 = b['box']
+        x1, x2 = to_x.get(x1, x1), to_x.get(x2, x2)
+        y1, y2 = to_y.get(y1, y1), to_y.get(y2, y2)
         if b['label'] == 'row':
             x1, x2 = 0, width
         elif b['label'] == 'column':
@@ -206,7 +246,8 @@ def detect_structure(tables_dir: Path, names: list[str], threshold: float, tol: 
         kind = classifier.config.id2label[logits.argmax().item()]
         result = run_detector(*detectors[kind], ImageOps.expand(image, INFERENCE_PAD, fill='white'), threshold)
         cells = [[v - INFERENCE_PAD for v in box.tolist()] for box in result['boxes']]
-        boxes = align_rows_to_text(cells_to_structure(cells, tol), image, tol)
+        boxes = align_columns_to_rules(cells_to_structure(cells, tol), image, tol)
+        boxes = align_rows_to_text(boxes, image, tol)
         boxes = expand_to_edges(boxes, image.width, image.height)
         records.append({'image': name, 'width': image.width, 'height': image.height, 'boxes': boxes})
         counts = ', '.join(f'{sum(b["label"] == n for b in boxes)} {n}(s)' for n in STRUCTURE_LABELS)
