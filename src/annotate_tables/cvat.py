@@ -56,9 +56,16 @@ def cvat_client():
     return make_client(CVAT_HOST, credentials=credentials)
 
 
+# Okabe-Ito hues: distinct from each other under colour-blindness and dark enough to read on white pages.
+LABEL_COLORS = {'column': '#0072B2', 'row': '#D55E00', 'span': '#009E73'}
+
+
 def create_task(client, name: str, labels: Sequence[str], images: list[Path], annotation_path: Path) -> int:
     task = client.tasks.create_from_data(
-        spec={'name': name, 'labels': [{'name': n} for n in labels]},
+        spec={
+            'name': name,
+            'labels': [{'name': n, 'color': LABEL_COLORS[n]} if n in LABEL_COLORS else {'name': n} for n in labels],
+        },
         resources=images,
         annotation_path=str(annotation_path),
         annotation_format='CVAT 1.1',
